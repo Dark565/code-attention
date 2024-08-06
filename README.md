@@ -22,19 +22,18 @@ Possible use cases include:
 
 ## Installation
 
-The tool can be quickly installed by performing the following operations in the project directory:
+The tool can be quickly installed with this simple command in the project root:
 
 ```sh
-$ pip install -r requirements.txt
 $ pip install -e .
 ```
 
 ## Usage example
 
-The simplest invocation looks like this:
+After installation a simple invocation looks like this:
 
 ```sh
-$ scripts/code_score.py file
+$ python3 -m code_attention file
 ```
 
 This command will evaluate the default model (codebert-base) and print all lines from the file, prefixed with a colored importance score.    
@@ -51,7 +50,7 @@ overlapped tokens are then averaged.
 
 Some context from the full document may be lost between windows; thus the output of large document 
 may not be as precise as for smaller ones that fit within the model's capacity.  
-It's advisable to test the tool in practice to evaluate its overall accuracy.
+It's advisable to test the tool in practice to empirically evaluate its overall accuracy.
 
 ## To do
 

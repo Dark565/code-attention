@@ -1,0 +1,32 @@
+[project]
+name = "code_attention"
+description = "AI-based importance score analysis for text files"
+authors = [
+	{name = "Grzegorz Kociołek", email = "gregkociolek@protonmail.com"}
+]
+dynamic = ["version"]
+requires-python = ">= 3.8"
+
+classifiers = [
+	"Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+	"Operating System :: OS Independent",
+	"Development Status :: 3 - Alpha",
+	"Environment :: GPU",
+	"Topic :: Scientific/Engineering :: Artificial Intelligence",
+	"Topic :: Scientific/Engineering :: Visualization"
+]
+
+dependencies = [
+	"torch",
+	"transformers"
+]
+
+[build-system]
+requires = ["setuptools>=64", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+
+[project.urls]
+Homepage = "https://github.com/Dark565/code-attention"

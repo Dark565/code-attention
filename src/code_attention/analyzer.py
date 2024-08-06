@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # Copyright (C) 2024 Grzegorz Kociołek
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
@@ -12,18 +10,12 @@
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
 # WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 
-import sys
-import re
-import argparse
-import scipy
-import numpy as np
 import torch
-from transformers import RobertaTokenizer, RobertaModel
 
 # TODO:
 # - Optimize processing of inputs smaller than the window length
-# - Fix averaging of values in the remainder window
 # - fix calculation of importance scores near the edges when the input is windowed
+# - Add type annotations and better error handling
 
 # Importance analyzer pipeline
 class AnalyzerPipeline:
@@ -35,15 +27,27 @@ class AnalyzerPipeline:
 
     self.tokenizer = tokenizer
     self.model = model
+
     self.lines = lines
     self.flags = flags
     self.output_importance = None
     self._commit_window_info()
     self._check_overlap_composite()
 
+  def _check_model(self):
+    if self.tokenizer.pad_token_id == None:
+      raise ValueError('Selected tokenizer doesn\'t have the pad token. It should be added before instantiating this class')
+
   def _commit_window_info(self):
     window_overlap = self.get_flag('window_overlap') or 0.5
-    self.window_size = self.model.embeddings.position_embeddings.weight.shape[0] - 4
+    if window_overlap < 0.0:
+      raise ValueError("Invalid window_overlap value")
+
+    if window_overlap > 1.0:
+      warnings.warn("The 'window_overlap' option is greater than 1")
+
+
+    self.window_size = self.tokenizer.model_max_length - 2
     self.window_offset = int((1.0 - window_overlap) * self.window_size)
 
   def _check_overlap_composite(self):
@@ -62,11 +66,12 @@ class AnalyzerPipeline:
 
     return self.output_importance
 
+  # Convert lines of text to token id lists
   def _encode_lines(self):
     self.enc_lines = [self.tokenizer.encode(line + "\n", add_special_tokens=False) for line in self.lines]
     self.joint_tokens = torch.tensor([token for line in self.enc_lines for token in line])
 
-  # Get sliding windows of the tokens
+  # Extract windows out of the full token sequence
   def _fold_tokens(self):
     offset_range = range(0,max(len(self.joint_tokens) - self.window_size,0) + self.window_offset,self.window_offset)
     n_windows = len(offset_range)
@@ -82,22 +87,20 @@ class AnalyzerPipeline:
     r_tok_windows[:,0] = self.tokenizer.bos_token_id
     self.token_windows = r_tok_windows
 
+  # Batch token windows through the model
   def _batch_evaluate(self):
     attention_mask = torch.ones(size=self.token_windows.size())
     attention_mask.masked_fill_(self.token_windows == self.tokenizer.pad_token_id, 0)
 
-    print(self.token_windows.shape)
-    print(attention_mask.shape)
-
     inputs = { 'input_ids': self.token_windows,
               'attention_mask': attention_mask }
 
-    # Forward pass to get the outputs and attention weights
     with torch.no_grad():
-        outputs = self.model(**inputs, output_attentions=True)
+        outputs = self.model(**inputs, output_attentions=True, output_hidden_states=False)
 
     self.batched_output = outputs
 
+  # Calculate token importance in windows
   def _calculate_token_importance(self):
     last_layer = self.batched_output.attentions[-1]
 
@@ -109,6 +112,7 @@ class AnalyzerPipeline:
 
     self.tok_imp_vec = attention_tensor.sum(dim=-2)
 
+  # Combine all windows
   def _unfold_importance(self):
     n_tokens = len(self.joint_tokens)
     offset_range = range(0,max(n_tokens - self.window_size,0) + self.window_offset,self.window_offset)
@@ -133,6 +137,7 @@ class AnalyzerPipeline:
 
     self.unfolded_vec = unfolded_vec
 
+  # Obtain the importance values per lines
   def _obtain_line_importance(self):
     out_imp = torch.empty(size=(len(self.enc_lines),), dtype=self.unfolded_vec.dtype)
 
@@ -156,105 +161,3 @@ class AnalyzerPipeline:
       return self.flags[flag]
     except KeyError:
       return None
-
-
-# Returns the model and the encoder
-def load_model(name, device, force = False):
-  tokenizer = RobertaTokenizer.from_pretrained(name)
-  model = RobertaModel.from_pretrained(name)
-  if force:
-    model = model.to(device)
-  else:
-    try:
-      model = model.to(device)
-    except RuntimeError as e:
-      print(f"warning: falling back to cpu as the model cannot be forwarded to device '{device}': '{e}'")
-      pass
-
-  model.eval()
-
-  return [tokenizer, model]
-
-
-# Create an ordered index map of non-empty lines
-def create_line_map(lines):
-  rxp = re.compile(r'^\s*$')
-  return list(filter(lambda i: not re.match(rxp, lines[i]), range(len(lines))))
-
-# Return a color escape based on intensity <0.0, 1.0>
-def ascii_intensity_to_color_escape(intensity):
-  norm = np.clip(intensity, 0.0, 1.0) #* 0.666 + 0.2
-  color = [norm, norm/3, 1.0-norm]
-  r, g, b = [int(x * 255) for x in color]
-  return f"\x1b[48;2;{r};{g};{b}m"
-
-ASCII_ESCAPE_RESET = "\x1b[0m"
-
-def main():
-  parser = argparse.ArgumentParser(
-      description="Calculate the importance score for each line of text",
-      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-
-  parser.add_argument('file', metavar='FILE', type=str)
-  parser.add_argument('-m', metavar='MODEL', type=str, default='microsoft/codebert-base', help="The model")
-  parser.add_argument('-e', action='store_true', help="Keep empty lines")
-  parser.add_argument('-S', action='store_true', help="Calculate the softmax of importance scores")
-  parser.add_argument('-M', action='store_true', help="Use mean attention instead of total attention per line")
-  parser.add_argument('--device', type=str, default='cuda', help="Device to use for model inference (falls back to cpu)")
-  parser.add_argument("--force-device", action='store_true', help="Force the specified device and fail if it cannot be used")
-  parser.add_argument('--window-overlap', metavar="PERCENT", type=float, default=50, help="Percent of overlap between token windows")
-  parser.add_argument('--rank-color', action='store_true', help="Color based on rank position instead of absolute importance value")
-
-  args = parser.parse_args()
-
-  with open(args.file, "r") as f:
-    src_code = f.read()
-
-  src_lines = src_code.split("\n")
-
-  if args.e:
-    line_map = list(range(len(src_lines)))
-  else:
-    line_map = create_line_map(src_lines)
-
-  filtered_lines = [src_lines[i] for i in line_map]
-
-  tokenizer, model = load_model(args.m, args.device, force = args.force_device)
-
-  flags = {
-      'mean_line_importance': args.M
-  }
-
-  analyzer = AnalyzerPipeline(tokenizer, model, filtered_lines, flags)
-  line_scores = analyzer()
-
-  line_scores -= line_scores.min()
-  line_scores /= line_scores.max()
-
-  if args.S:
-    line_scores = scipy.special.softmax(line_scores)
-
-  # Save a ranking position of lines
-  sorted_idx = list(sorted(range(len(line_scores)), key=lambda i: line_scores[i]))
-  line_info = [None] * len(src_lines)
-
-  for i, score in enumerate(line_scores):
-    line_info[line_map[i]] = [score, None]
-
-  for i, idx in enumerate(sorted_idx):
-    line_info[line_map[idx]][1] = i
-
-  # Print the importance scores
-  for line, info in zip(src_lines, line_info):
-    if info == None:
-      print(f"-: {line}")
-    else:
-      color_intensity = (info[1] + 1) / len(line_scores) if args.rank_color else info[0]
-      col_escape = ascii_intensity_to_color_escape(color_intensity)
-      print(f"{col_escape}{info[0]:.4f}{ASCII_ESCAPE_RESET}: {line}")
-
-
-if __name__ == '__main__':
-  main()
-
-
