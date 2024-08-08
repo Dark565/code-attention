@@ -22,7 +22,7 @@ Possible use cases include:
 
 ## Installation
 
-The tool can be quickly installed with this simple command in the project root:
+The tool can be quickly installed with this simple command executed in the project's root directory:
 
 ```sh
 $ pip install -e .
@@ -33,7 +33,7 @@ $ pip install -e .
 After installation a simple invocation looks like this:
 
 ```sh
-$ python3 -m code_attention file
+$ code-attention file
 ```
 
 This command will evaluate the default model (codebert-base) and print all lines from the file, prefixed with a colored importance score.    
@@ -55,7 +55,7 @@ It's advisable to test the tool in practice to empirically evaluate its overall 
 ## To do
 
 - [ ] the vim plugin
-- [ ] add support for other sequence delimiters (beyeond the new line)
+- [ ] add support for other sequence delimiters (beyond the new line)
 - [ ] add more options
 - [ ] expand this tool to include more methods of handling inputs beyond the model's window size
 
